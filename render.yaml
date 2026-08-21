@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: pocket-ledger
+    runtime: node
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npm run db:init && npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: pocket-ledger-db
+          property: connectionString
+      - key: DATABASE_SSL
+        value: "false"
+      - key: JWT_SECRET
+        generateValue: true
+databases:
+  - name: pocket-ledger-db
+    plan: free
+    databaseName: pocket_ledger
+    user: pocket_ledger

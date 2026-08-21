@@ -1,0 +1,32 @@
+services:
+  database:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: pocket_ledger
+      POSTGRES_USER: pocket_ledger
+      POSTGRES_PASSWORD: pocket_ledger_local
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pocket_ledger -d pocket_ledger"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build: .
+    ports:
+      - "4000:4000"
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      DATABASE_URL: postgresql://pocket_ledger:pocket_ledger_local@database:5432/pocket_ledger
+      DATABASE_SSL: "false"
+      JWT_SECRET: local-development-secret-change-before-production-8fa2c
+    depends_on:
+      database:
+        condition: service_healthy
+    command: sh -c "npm run db:init && npm start"
+
+volumes:
+  postgres_data:
