@@ -17,4 +17,11 @@ function requireAuth(req, res, next) {
   } catch { return res.status(401).json({ error: 'Invalid or expired session.' }); }
 }
 
-module.exports = { issueToken, requireAuth };
+function requireAdmin(req, res, next) {
+  if (!process.env.ADMIN_EMAIL || req.user.email.toLowerCase() !== process.env.ADMIN_EMAIL.trim().toLowerCase()) {
+    return res.status(403).json({ error: 'Administrator access required.' });
+  }
+  next();
+}
+
+module.exports = { issueToken, requireAuth, requireAdmin };
