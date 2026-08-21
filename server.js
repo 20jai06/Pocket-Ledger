@@ -4,7 +4,7 @@ const bcrypt = require('bcryptjs');
 const cookieParser = require('cookie-parser');
 const cors = require('cors');
 const db = require('./db');
-const { issueToken, requireAuth } = require('./auth');
+const { issueToken, requireAuth, requireAdmin } = require('./auth');
 require('dotenv').config();
 
 const app = express();
@@ -21,6 +21,7 @@ const defaultCategories = [
 ];
 const cookieOptions = { httpOnly: true, sameSite: 'lax', secure: process.env.NODE_ENV === 'production', maxAge: 7 * 24 * 60 * 60 * 1000 };
 const asyncRoute = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+const isAdminEmail = (email) => !!process.env.ADMIN_EMAIL && email.toLowerCase() === process.env.ADMIN_EMAIL.trim().toLowerCase();
 
 app.post('/api/auth/signup', asyncRoute(async (req, res) => {
   const { name, email, password } = req.body;
@@ -31,7 +32,8 @@ app.post('/api/auth/signup', asyncRoute(async (req, res) => {
     const result = await db.query('INSERT INTO users (name, email, password_hash) VALUES ($1, $2, $3) RETURNING id, name, email', [name.trim(), normalizedEmail, passwordHash]);
     const user = result.rows[0];
     await Promise.all(defaultCategories.map(([category, color]) => db.query('INSERT INTO categories (user_id, name, color) VALUES ($1, $2, $3)', [user.id, category, color])));
-    res.cookie('token', issueToken(user), cookieOptions).status(201).json({ user });
+    await db.query('UPDATE users SET last_login_at = NOW() WHERE id = $1', [user.id]);
+    res.cookie('token', issueToken(user), cookieOptions).status(201).json({ user: { ...user, isAdmin: isAdminEmail(user.email) } });
   } catch (error) {
     if (error.code === '23505') return res.status(409).json({ error: 'An account with this email already exists.' });
     throw error;
@@ -43,7 +45,8 @@ app.post('/api/auth/login', asyncRoute(async (req, res) => {
   const result = await db.query('SELECT id, name, email, password_hash FROM users WHERE email = $1', [email?.trim().toLowerCase()]);
   const user = result.rows[0];
   if (!user || !(await bcrypt.compare(password || '', user.password_hash))) return res.status(401).json({ error: 'Incorrect email or password.' });
-  const publicUser = { id: user.id, name: user.name, email: user.email };
+  const publicUser = { id: user.id, name: user.name, email: user.email, isAdmin: isAdminEmail(user.email) };
+  await db.query('UPDATE users SET last_login_at = NOW() WHERE id = $1', [user.id]);
   res.cookie('token', issueToken(publicUser), cookieOptions).json({ user: publicUser });
 }));
 
@@ -51,7 +54,15 @@ app.post('/api/auth/logout', (req, res) => res.clearCookie('token', { httpOnly: 
 app.get('/api/auth/me', requireAuth, asyncRoute(async (req, res) => {
   const { rows } = await db.query('SELECT id, name, email FROM users WHERE id = $1', [req.user.sub]);
   if (!rows[0]) return res.status(401).json({ error: 'Session no longer valid.' });
-  res.json({ user: rows[0] });
+  res.json({ user: { ...rows[0], isAdmin: isAdminEmail(rows[0].email) } });
+}));
+
+app.get('/api/admin/users', requireAuth, requireAdmin, asyncRoute(async (req, res) => {
+  const { rows } = await db.query(`SELECT u.id, u.name, u.email, u.created_at, u.last_login_at,
+    COUNT(t.id)::int AS transaction_count
+    FROM users u LEFT JOIN transactions t ON t.user_id = u.id
+    GROUP BY u.id ORDER BY u.created_at DESC`);
+  res.json(rows);
 }));
 
 app.get('/api/categories', requireAuth, asyncRoute(async (req, res) => {
